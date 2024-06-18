@@ -1,0 +1,489 @@
+
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(readr)
+library(ggplot2)
+library(lubridate)
+library(fitdistrplus)
+library(skimr)
+        
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Importing the data and necessary library
+```{r}
+car_accidents_2 <- read.csv("car_accidents_victoria.csv")
+head(car_accidents_2) # sneak peak of the data set
+summary(car_accidents_2) # summary of the data set
+```
+### Question 1
+#### Question 1.1:
+<br>
+There are 1644 row and 29 columns in the data set.
+```{r}
+dim(car_accidents_2) # see the dimension of the data set
+```
+<br>
+
+#### Question 1.2:
+<br>
+There are 7 regions in the data, including:
+
+- Eastern region.
+
+- Metropolitan North West region.
+
+- Metropolitan South East region.
+
+- North Eastern region.
+
+- Northern region.
+
+- South Western region.
+
+- Western region.
+<br>
+
+
+
+#### Question 1.3:
+*Data types that are used in the dataset:*
+
+* Date data: The data that addresses the date in the dataset is non numerical data and has meaningful order (one date comes after another). Therefore this is a oridnal data type.
+
+* Accident type data: The data that indicates the types of accidents is categorical and does not come in meaningful order to the categories.
+Therefore this is a nominal data type.
+
+* Count data: The data that shows the number of each type of accidents by each region and date in the dataset is numerical data and is Discrete data type.
+<br>
+
+
+
+#### Question 1.4:
+The data covers number of car accidents in the period from **01/01/2016** to **30/06/2020**.
+```{r}
+car_accidents_2a <- read.csv("car_accidents_victoria.csv", skip = 1, header = TRUE) # create a new data frame car_accidents_2a that skips the first row
+car_accidents_2a$DATE = as.Date(car_accidents_2a$DATE, format = "%d/%m/%Y") # format the DATE variable
+min(car_accidents_2a$DATE) # generate the earliest date
+max(car_accidents_2a$DATE) # generate the latest date
+```
+<br>
+
+
+#### Question 1.5:
+Variables FATAL, SERIOUS, NONINJURY, OTHER represent different categories of car accidents that were recorded in the data set.
+<br>
+
+
+#### Question 1.6:
+* FATAL represents the accidents that have fatal consequenses. It means one or more people in the accident died.
+
+* SERIOUS represents accidents that cause significant or severe damages.
+
+Base on the characters of these two categories, there can be overlaping categories between them. For instance an accident can have one person died and and the other survived. This can result in counting both FATAL and SERIOUS cases.
+
+<br>
+
+
+### Question 2
+
+#### Question 2.1: Cleaning up columns
+```{r}
+library(tidyverse) #importing tidyverse library
+library(readr) #importing readr library
+cav_data_link <- 'car_accidents_victoria.csv'
+top_row <- read_csv(cav_data_link, col_names = FALSE, n_max = 1)
+second_row <- read_csv(cav_data_link, n_max = 1)
+
+column_names <- second_row %>%
+  unlist(., use.names=FALSE) %>%
+  make.unique(., sep = "__") # double underscore
+
+column_names[2:5] <- str_c(column_names[2:5], '0', sep='__')
+
+daily_accidents_2 <-
+  read_csv(cav_data_link, skip = 2, col_names = column_names)
+
+summary(daily_accidents_2) #summarize the new data frame
+head(daily_accidents_2) #head of the new data frame
+```
+
+
+#### Question 2.2:
+
+##### 2.2a
+- **Does each variable have its own column?**: No, columns like 'FATAL__0', 'SERIOUS__0', etc represent both accident categories and the regions where they were recorded. This mean both variables are included in one column name, therefore not every variable has its own column.
+- **Does each observation have its own row?**: Yes, each row represents data for a specific date with values for each category for each region recorded in the data set.
+- **Does each value have its own cell?**: Yes, each cell contains a single value representing the number of the accidents.
+<br>
+
+
+##### 2.2b
+1. How many spreading (or pivot_wider) operations do you need?
+
+*According to Hadley, a tidy dataset satisfies the following three conditions:*
+
+*- Each variable must have its own column.*
+
+*- Each observation must have its own row.*
+
+*- Each value must have its own cell.*
+
+The data frame is currently "wide" because it has multiple columns for each combination of accident category and region (such as FATAL__0). Using `pivot_wider` here would make the data even "wider", hence becomes less tidy. Therefore I chose to use `pivot_longer` to transform the data into a long format, where each row represents an observation for each date, category, and region. 
+
+**Number of `pivot_wider` operations**: 0.
+
+2. How many gathering (or pivot_longer) operations do you need?: 
+
+**Number of `pivot_longer` operations**: 4
+
+3. Explain the steps in detail:
+Operations used:
+- `cols = - DATE`: This means all the columns are being pivoted except for the DATE.
+- `names_to = c("Category", "Region")`: This operation creates 2 new columns in the new long format, name "Category" (FATAL, SERIOUS,...) and "Region" (0,1,2,..)
+- `names_pattern = "([A-Z]+)__([0-9]+)"`: This is regular expression pattern. This operation is used to split the original columns into desired format. `([A-Z])` matches the uppercase letter, `__` matches two underscore, `([0-9])` matches the numbers.
+- `Values_to = "Number of cases"`: create a new column for number of cases for each combination of accident category and region.
+4. Provide/print the head of the data set:
+```{r}
+library(tidyverse)
+format_long <- daily_accidents_2 %>%
+  pivot_longer(
+    cols = -DATE,  # the DATE variable should not be included
+    names_to = c("Category", "Region"), # Two new columns for the Severity of the accidents and Region
+    names_pattern = "([A-Z]+)__([0-9]+)",  # Regex pattern 
+    values_to = "Number of cases" # New column for the number of cases
+  )
+view(format_long)
+head(format_long)
+```
+<br>
+
+
+##### 2.2c
+We check the current data types and make necessary transform:
+```{r}
+library(tidyverse) # load tidyverse library
+str(format_long) # check the data types of the data frame
+
+format_long <- format_long%>% 
+  # mutate selected variables into desired data types
+  mutate(
+    DATE = as.Date(DATE, format = "%d/%m/%Y"),
+    Region = as.integer(Region)
+  )
+str(format_long) # check the format again
+
+```
+It is clear that the data types of variable DATE should be reformat into Date type with as.Date, while the data types of variable Region should be reformatted into factor or integer.
+<br>
+
+##### 2.2d
+Check if there are any missing values in the data frame:
+```{r}
+sum(is.na(format_long)) # check if there is na value in the data. 4 missing value returned.
+colSums(is.na(format_long)) # find out which columns are containing missing values. 
+```
+Fix the missing data: There were 4 NA values were recorded in total of 46004 value, this means only 0.008% of the values is affected by this. Therefore, the approach can be used here is to remove all the NA values.
+```{r}
+library(tidyverse)
+format_long <- format_long[!is.na(format_long$`Number of cases`), ] # remove all the values that is na
+
+sum(is.na(format_long)) # check again for the na values
+```
+
+<br>
+
+
+
+### Question 3
+
+#### Question 3.1:
+Choosing Region 0 (Eastern Region from the initial data set) and create a data set for this region, then print out:
+- Name of the region.
+
+- The number of serious road accidents.
+
+- The total number of road accidents in the region.
+
+After that, add "TOTAL_ACCIDENTS" column into the data frame for the selected region. 
+```{r}
+library(tidyverse)
+library(dbplyr)
+selected_region <- car_accidents_2a %>% dplyr::select(1:5) # select all the columns for desired Region 
+
+serious <- sum(selected_region$SERIOUS) # calculate number of serious cases in Eastern region
+
+total <- sum(selected_region$FATAL) + sum(selected_region$SERIOUS) + sum(selected_region$NOINJURY) + sum(selected_region$OTHER) # calculate total number of road accidents in Eastern region
+
+# print out desired results
+print("Eastern Region")
+print(paste("Number of serious accidents:", serious))
+print(paste("Total number of road accidents:", total))
+
+# adding TOTAL_ACCIDENT column
+selected_region <- selected_region%>%
+  group_by(DATE)%>%
+  mutate(TOTAl_ACCIDENT = sum(FATAL + SERIOUS + NOINJURY + OTHER))%>%
+  ungroup()
+head(selected_region)
+```
+
+
+#### Question 3.2
+To compare the number of road accidents throughout the year for the selected region, a line plot can be used for visualization. 
+
+```{r}
+# Make sure the DATE column is in the right format
+library(tidyverse)
+Data_by_year <- selected_region%>%
+  mutate(DATE = as.Date(DATE, format = "%d/%m/%Y"))
+
+# Extract YEAR from the DATE
+Data_by_year <- selected_region%>%
+  mutate(YEAR = lubridate::year(DATE))%>%
+  group_by(YEAR)%>%
+  summarise(Total_cases = sum(TOTAl_ACCIDENT))%>%
+  ungroup()
+
+# Creating a line plot for Eastern Region
+library(ggplot2)
+ggplot(Data_by_year, aes(x = YEAR, y = Total_cases)) + 
+  geom_line(color = "blue", size =1) +
+  geom_point(color = "black", size = 3) +
+  labs(title = "Number of road accidents accross the year in Eastern Region", 
+       x = "Year",
+       y = "Number of cases") +
+  theme_minimal()
+```
+
+The plot shows a top number of accident in 2016 with 1081 cases, followed by a significant down trend in the following years. The number of accidents remains stable between 2017 and 2019 and plunges in 2020 with 365 cases. However, this is because the time period in the initial data only recorded until mid of 2020, so it explains this well.
+
+
+#### Question 3.3
+```{r}
+library(tidyverse)
+library(lubridate)
+# Extract day of the week from the data frame
+selected_region.week <- selected_region%>%
+  mutate(WEEK_DAY = as.character(wday(DATE, label = TRUE,)))%>%
+# Sort week day from Monday to Sunday
+  mutate(WEEK_DAY = factor(WEEK_DAY, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")))
+
+# Generating violin plot
+library(ggplot2)
+ggplot(selected_region.week, aes(x = WEEK_DAY, y = TOTAl_ACCIDENT)) +
+  geom_violin(fill = "green")+
+  labs(titel = "Road accidents during a week",
+       x = "Days of week",
+       y = "Number of cases") + 
+  theme_minimal()
+
+```
+
+**Result Description:**
+
+- The violin plot shows the distribution of the data base on the width of the parts of the violin. The wider the parts, the more values are demonstrated, which means the more cases of accidents were recorded. The narrower parts described the opposite.
+
+- Base on the plot, we can see the days with most and least accident cases, which consecutively have the widest and narrowest parts on respective number of cases on the y-axis.
+
+**Result interpretation:**
+
+- It can be clearly seen that the number of cases are the lowest on Tuesday, most likely to be low (less than 6 and mostly between 0 and 3). These figures happen to increase towards the weekend.
+
+- The plot shows that Saturday have the most cases recorded (with the highest number of cases in one day), while Sunday remains the second highest. This might suggest that more accidents tend to happen during weekend. This can be caused by various reasons, such as people being more relaxed and less concentrated, the higher in consumption of alcohol, or people travel more for leisure activities, which results in busier traffic condition.
+
+- Monday and Friday also witnessed the number of cases increasing slightly, this can be translated as "left-over effect of the weekend". This is because people are hyping for personal plans on Friday and are more rush to get back to work on Monday, while having fatigue or distractions from those activities.
+
+
+
+#### Question 3.4:
+
+**1. Which distributions are appropriate for modelling the number of accidents?**
+
+The number of accidents are discrete discrete data, the count of events are in fixed intervals, the count can range from 0 to many more each day. Therefore Poisson,  Negative Binomial, and Geometric, and Binomial distributions can be considered appropriate for modelling. 
+
+
+**2. Which variables meet the assumptions for the Poisson distribution and why?**
+
+*For data to follow a Poisson distribution, it should meet the following criteria:*
+
+*- The variance approximately equals the mean.*
+
+*- Data consists of independent events:* In this case, one accident is not likely to influence the occurrence of another. Therefore, they can be considered independent.
+
+```{r}
+library(skimr)
+skim(selected_region$FATAL)
+skim(selected_region$SERIOUS)
+skim(selected_region$NOINJURY)
+skim(selected_region$OTHER)
+skim(selected_region$TOTAl_ACCIDENT)
+```
+
+**FATAL variable:** mean and variance are approximately equal.
+
+- mean = 0.8521
+
+- variance = sd^2 = 0.08652293
+
+**SERIOUS variable:** mean < variance
+
+- mean = 0.7918
+
+- variance = 0.875037
+
+**NOINJURY variable:** All values are zero
+
+- mean = 0
+
+- variance = 0
+
+**OTHER variable:** mean < variance
+
+- mean = 1.4565
+
+- variance = 1.6648
+
+**TOTAL_ACCIDENT variable:** mean < variance
+
+- mean = 2.3335
+
+- variance = 2.8082
+
+From the result of mean and variance, we can see that only FATAL variable are suitable for a poisson distribution. However, in real-world scenario, a fatal accident might be recorded following a serious accident, or in one accident there might be both fatal and other type of injury occur. This means the values might not be independent, therefore a poisson distribution might to be very well-fitted. 
+
+**3. To reduce the dependence between consecutive days, randomly sample 200 records out of the whole data set (all records for the selected region) for modelling.**
+
+```{r}
+library(tidyverse)
+random_data <- selected_region%>%
+  ungroup() %>%
+  sample_n(200)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Question 4:
+
+#### Question 4.1:
+```{r}
+library(fitdistrplus)
+
+# fitting poisson distribution
+fit_poisson <- fitdist(random_data$TOTAl_ACCIDENT, "pois")
+summary(fit_poisson)
+
+# fitting negative binomial distribution
+fit_negative_binomial <- fitdist(random_data$TOTAl_ACCIDENT, "nbinom")
+summary(fit_negative_binomial)
+
+```
+
+#### Question 4.2: 
+
+From the result of fitting poisson and negative binomial distributions, we can see that the Negative binomial distribution has a higher log-likelihood of -369.9028 comparing to that of the Poisson distribution of -370.356. 
+
+Base on this, it can be said that the Negative binomial distribution would fit the data better than the Poisson distribution in this case of random 200 data.
+
+On the other hand, The Negative binomial distribution has higher AIC and BIC (743.8056 and 750.4022 respectively) comparing to that of the Poisson distribution (742.7119 and 746.0103 respectively). This mean while the model can fit better, having more additional parameters can result in counter-effective.
+
+#### Questions 4.3:
+
+For this question, we choose "FATAL" and "SERIOUS" as the other 2 different accident types. The distributions to be used are Poisson, Negative binomial, and geometric distribution.
+
+1. FATAL accidents
+```{r}
+library(fitdistrplus)
+# fitting poisson distribution
+fit_poisson <- fitdist(selected_region$FATAL, "pois")
+summary(fit_poisson)
+
+# fitting negative binomial distribution
+fit_negative_binomial <- fitdist(selected_region$FATAL, "nbinom")
+summary(fit_negative_binomial)
+
+#fitting geometric distribution
+fit_geometric <- fitdist(selected_region$FATAL, "geom")
+summary(fit_geometric)
+```
+
+2. SERIOUS accidents
+```{r}
+library(fitdistrplus)
+# fitting poisson distribution
+fit_poisson <- fitdist(selected_region$SERIOUS, "pois")
+summary(fit_poisson)
+
+# fitting negative binomial distribution
+fit_negative_binomial <- fitdist(selected_region$SERIOUS, "nbinom")
+summary(fit_negative_binomial)
+
+#fitting geometric distribution
+fit_geometric <- fitdist(selected_region$SERIOUS, "geom")
+summary(fit_geometric)
+```
+
+
+| Distribution-name  | Accident type  | The Log likelihood (value)  |
+|---------- |---------- |---------- |
+| Poisson  | FATAL  | -489.6212  |
+| Negative Binomial  | FATAL | -489.5307  |
+| Geometric  | FATAL  | -490.5713  |
+|---------- |---------- |---------- |
+| Poisson  | SERIOUS  | -1960.059  |
+| Negative Binomial  | SERIOUS  | -1956.142  |
+| Geometric  | SERIOUS  | -2020.716 |
+
+The table above describes the fit of three different distributions: Poisson, Negative binomial, and Geometric for two types of accident: "Fatal" and "Serious". The values of log-likelihood factor represent the potential of well-fitting of the distributions to the data. The higher the value, the better fit.
+
+**As of FATAL accident type:**
+
+- The log-likelihood value of the Negative Binomial distribution is highest (-489.5307) comparing to the other two. This means Negative Binomial distribution fits best to modelling this variable.
+
+**As of SERIOUS accident type:**
+
+- The log-likelihood value of the Negative Binomial distribution is highest (-1956.142) comparing to the other two. This means Negative Binomial distribution fits best to modelling this variable.
+
+Both of the observed accident type resulted in Negative Binomial distribution type, meaning the variance of the data tend to exceed the mean. In contrast, the Geometric distribution type is not suitable for the given data, as the values of log-likelihood in both accident types are significantly lower than the other two. 
+
+
+
+
+
+
+### Question 5:
+
+It can not be denied that data and statistics stand enormously important roles in various fields of modern society, from astronomy, biology to business and finance,... Regarding statistical modelling, knowing how to choose the optimal probability distribution that best demonstrates a data set has been a critical challenge for many researchers. 
+
+As a result, many methods have been developed to help bringing theoretical models closer to real-world data. Among all the methods, the Method of Moments(MoM), Maximum Likelihood Estimation (MLE), and Goodness-of-Fit Tests have stood out as three most common in practical approaches, each of them has their own set of strength and limitation. This literature are meant to review and compare these three methods, aiming to bring out a comprehensive concept of their application, advantages, and drawbacks. 
+
+Regarding the MoM method, this is a way of estimating the parameters of distribution by matching the sample average values with the average values from the distribution. This method is very simple and consistent under general conditions. It can be computed quickly and easily even without computers. However, this method can take a long time to work through the estimators to achieve an accurate answer. Also, in some more complex scenarios like heavy-tailed distributions, moments of higher order might not be able to estimate, making the method inapplicable. The difficulties in complex frames make it easier to make mistakes with MoM.
+
+As of the MLE method, this method is used to determine values for the parameter of a model. To apply this method, first we need to assume the distribution, then find out the maximum Log-likelihood. Once we have the MLEs, we can calculate how well the model fits the researching data using various criteria or tests. The MLE method is known as one of the most efficient estimators with the smallest variance. With a large sample size, the result of MLE method is unbiased. Given the efficiency of the method, it can also be applied in many distributions, not just the common ones. However, MLE comes with some disadvantages as they can get complex and difficult to solve. As a matter of fact, they can bring up a high expenditures in computational resources if the complexity of the likelihood function is high. With small data set, the method can also be biased. One more problem of MLE is that it depends on the assumptions,, meaning the entire process could be useless if the assumed models do not fit well enough. 
+
+Last but not least, the Goodness-of-Fit Tests are statistical tests on how well-fitting actual data points to a given model. Goodness-of-Fit Tests commonly include the Chi-Squared Test, Kolmogorov-Smirnov Test, Anderson-Darling Test, and Shapiro-Wilk Test. This method can help bringing out a objective measurement of a model and can be used to easily forecast future trends and patterns. Goodness-of-Fit Tests can also be used to compare the fit of various models to one data set. Due to the method's commonness, most software in statistical field provide function to perform these tests, making them easily accessible. Some of the weaknesses of the method are they require assumptions, meaning some tests have their own assumptions which should not be violated, otherwise can lead to false or misleading results. These tests are objectively operated, which means they can point out a distribution does not fit well, but they do not necessarily bring out a better one. These methods also depend a lot on p-values of the data.
+
+In conclusion, it is crucial to keep in mind that there is no perfect scenario. The choice of a fitting distribution method should be considered not only by the nature of the data, but also by the end goals of the researches. 
+
+
+### Question 6:
+
+| Question  | Yes/ No  | Explanation  |
+|---------- |---------- |---------- |
+| Q6.1  | Yes | An ethical implication might be about the sensitivity of the data. This is because data of car accidents with fatal consequences and injuries can be sensitive to the individuals or families that involved in the records. Another thing is the severity of the accident types might be reported subjectively and biased in some sense. All of these can effect the outcome of the analytical processes.  |
+| Q6.2  | Yes | Privacy concerns could be one of the problem of the data as it might contains personal information of the people involved in the accidents. |
+| Q6.3  | No | There was not much I could have done with the given data to mitigate the problems above. But I would suggest the data to be anonymous and only focus on the number of cases to protect any personal identifiable info. The data should also be encrypted to avoid unauthorized access. Also acknowledging the potential of being biased of the data in the analyses can be a measures to this problem. |
+

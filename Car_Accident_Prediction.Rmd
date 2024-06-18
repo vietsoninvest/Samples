@@ -1,0 +1,615 @@
+
+
+```{r setup, include=FALSE, warning = FALSE, message=FALSE}
+library(httr)
+library(jsonlite)
+library(lubridate)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(dbplyr)
+library(ggplot2)        
+library(mgcv)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Question 1:
+#### Q1.1: 
+<br>
+
+The data source I will be using in this assignment is **National Oceanic and Atmospheric Administration (NOAA) data**. This data source is: 
+
+- *Reliable and accurate*: NOAA data is gathered using a sophisticated and vast network of satellites, radars, weather stations, and other sources.
+
+- *Comprehensive*: NOAA offers a wide range of meteorological data, such as temperature, precipitation, wind speed, humidity, and many more, enabling in-depth modelling and analysis.
+
+- *Historical and Real-time*: Time-wise factors play a crucial role in this assignment, since I will analyze the data and build predicting model for a specific region in a specific time.
+
+- *Accessible*: NOAA provides APIs service for automated and customizable data retrieval, making it useful for in-depth analysis.
+
+**With NOAA data, I can customize and retrieve specific data, including:**
+
+- Dataset type: NOAA provides 'GHCND' datasets with daily temperature data. The dataset is very suitable to match with car accidents data, which was also recorded on a daily basis.
+
+- Location categories/ Locations/ Stations: With these NOAA data characteristics, I can retrieve specific data in places that are appropriate for my assignment's analyzing needs, allowing precise and detailed analysis. 
+
+- Data categories/ Data types: Using these parameters can help me to understand and collect the right information that is compatible and can be reconciled with the car accidents data. 
+
+
+#### Q1.2: Retrieving data from NOAA
+To retrieve suitable data from NOAA, I will use APIs service from NOAA data source. Due to the extremely wide range of the data, I shall take certain actions to select the appropriate data that I require for the assignment 
+
+- Firstly, the weather data needs to have to be in the right place for analysis. Because I have a plan to choose to analyze Eastern Region of Victoria from the car accidents data, I will use `locationid` and `stationid` to identify specific stations that are located at desired place.
+
+- Secondly, our car accidents data was recorded in a specific time frame (2016 to 2020), therefore the weather data needs to cover the same period to make the analysis meaningful. I will use `maxdate` to filter a list of valid stations. 
+
+- Lastly, I will choose a specific station that provides good data and is in the suitable location of Eastern region, Victoria.
+
+In this case, the station will be: **VIEWBANK ARPANSA, AS**, located in eastern region of Victoria. The station has a recording of different weather data on a daily basis. 
+
+Generating list of valid stations:
+```{r}
+
+# Set parameters
+base_url <- "https://www.ncei.noaa.gov/cdo-web/api/v2/stations"
+location <- "CITY:AS000006" #locationid of Melbourne
+limit <- 1000 
+offset <- 1 
+cut_off_date <- as.Date("2020-06-30")  
+  
+headers <- add_headers(token = "gFGkiZEkCWnzbWhoCHOCBtryKoqlTLNj") # Token got from token requesting page
+  
+url <- paste0(base_url, "?locationid=", location, "&limit=", limit, "&offset=", offset)
+  
+response <- GET(url, headers)
+  
+# Handle the response
+if (http_error(response)) {
+  cat("HTTP Status Code:", status_code(response), "\n")
+  cat("Content:", content(response, "text"), "\n")
+  stop("HTTP error. Exiting.")
+} else {
+  stations_data <- fromJSON(content(response, as = "text", encoding = "UTF-8"), flatten = TRUE)
+    
+# Filter the stations by maxdate, making sure the maxdate is equal or greater than the cut_off_date
+valid_stations <- subset(stations_data$results, as.Date(maxdate) >= cut_off_date)
+    
+# Write the valid_stations to a CSV file
+write.csv(valid_stations, "valid_stations.csv", row.names = FALSE)
+}
+```
+
+Generating data of a specific station: 
+
+```{r}
+
+# Setup parameters
+base_url <- "https://www.ncei.noaa.gov/cdo-web/api/v2/data"
+dataset <- "GHCND" # datasetid for daily recording
+station <- "GHCND:ASN00086068" # desired specific stationid
+start_date <- as.Date("2016-01-01") 
+end_date <- as.Date("2020-06-30")
+limit <- 1000  # Maximum limit allowed by the API
+headers <- add_headers(token = "gFGkiZEkCWnzbWhoCHOCBtryKoqlTLNj")
+
+# Initialize an empty data frame to hold the results
+station_data <- data.frame()
+
+# Loop over each year
+for (year in year(start_date):year(end_date)) {
+  yearly_start_date <- as.Date(paste0(year, "-01-01"))
+  yearly_end_date <- min(as.Date(paste0(year, "-12-31")), end_date)
+  
+# Construct URL
+url <- paste0(base_url, "?datasetid=", dataset, "&stationid=", station,
+                "&startdate=", format(yearly_start_date, "%Y-%m-%d"), 
+                "&enddate=", format(yearly_end_date, "%Y-%m-%d"), 
+                "&limit=", limit)
+  
+# Make the GET request
+response <- GET(url, headers)
+  
+# Handle the response
+if (http_error(response)) {
+  cat("HTTP Status Code:", status_code(response), "\n")
+  cat("Content:", content(response, "text"), "\n")
+  stop("HTTP error. Exiting.")
+} else {
+  content <- fromJSON(content(response, as = "text", encoding = "UTF-8"), flatten = TRUE)
+if ("results" %in% names(content)) {
+    station_data <- rbind(station_data, content$results)
+    }
+  }
+}
+
+write.csv(station_data, "noaa_068station_weather_data.csv", row.names = FALSE)
+
+```
+
+
+
+#### Q1.3: 
+
+First we will have a look at the `summary` and `head` of the data to get a brief idea of it.
+```{r}
+weather_data <- read.csv("noaa_068station_weather_data.csv")
+summary(weather_data) # summary of the dataset
+head(weather_data) # sneak peak of the dataset
+```
+To answer the question: 
+```{r}
+dim(weather_data) # dimension of the data 
+weather_data$date <- as.Date(substr(weather_data$date,1,10)) # formatting the column to date data only
+min(weather_data$date) # generate the earliest date
+max(weather_data$date) # generate the latest date
+```
+From the result above, we can tell:
+
+- Local weather data has 4545 rows.
+- Time period the data covers: 01/01/2016 to 30/06/2020. 
+
+**Now we will explore the features in our weather data:**
+
+- `date`: This column represents the date recorded.
+
+- `datatypes`: This column represents the datatypes recorded within the specified date, including: 
+  - PRCP: Precipitation(tenths of mm), this indicates the amount of rainfall in a day.
+  - TMAX: Maximum temperature (tenth of Celsius degree). 
+  - TMIN: Minimum temperature (tenth of Celsius degree).
+
+```{r}
+unique_values <- unique(weather_data$attributes)
+number_of_unique_values <- length(unique_values)
+print(number_of_unique_values)
+
+```
+- `attribute`: This columns represents the specific attribute flags by NOAA. From the result above, we can see there is only one attribute value in our data. The `,,a,` attribute means 'accumulation', indicating that the recorded value is accumulated over a period, usually of 24 hours. This feature does not do much in our further analysis of the data.
+
+Looking at the data, we can see that the format of the `weather_data` is long and will be incompatible to use with `car_accidents` data in later analyzing steps. Therefore, some actions will be taken beforehand to mitigate this problem. 
+
+I will use `pivot_wider` to widen the `weather_data` for later usage.
+
+```{r}
+library(tidyr)
+library(dplyr)
+
+weather_data_wide <- weather_data %>%
+  pivot_wider(names_from = datatype, values_from = value)
+
+```
+I will then check if the data has NaN value and proceed cleaning by replacing NaN values with the median value.
+```{r}
+weather_data_wide <- weather_data_wide %>%
+  mutate(
+    TMIN = ifelse(is.na(TMIN), median(TMIN, na.rm = TRUE), TMIN),
+    TMAX = ifelse(is.na(TMAX), median(TMAX, na.rm = TRUE), TMAX),
+    PRCP = ifelse(is.na(PRCP), median(PRCP, na.rm = TRUE), PRCP)
+  )
+
+```
+
+Lastly, I will create a new column called `TAVG` from `TMIN` and `TMAX` for further analyzing purposes.
+
+```{r}
+weather_data_wide <- weather_data_wide %>% 
+  mutate(TAVG = (TMAX + TMIN) / 2)
+
+head(weather_data_wide)
+```
+
+
+
+### Question 2:
+#### Q2.1: Model planning
+
+a. The model's primary objective is to forecast the frequency and severity of traffic accidents in a selected area based on local weather and accident data from the past. In order to find patterns, the model will examine historical data on traffic accidents together with weather features like temperature, precipitation, and other relevant weather conditions.  The model's output will help in predicting the occurrence and severity of car accidents on a give time at a given location.
+
+b. Emergency services can use the model to optimize the allocation of services and resources. It can also be used to create real-time alert or insight when weather conditions change.
+
+c.Potential users of the model can be: Emergency Response Coordinators, Traffic Management Authorities, Insurance Companies, and General Public. The use of the model can benefit each of these stakeholders in various ways.
+
+#### Q2.2: Relationship and data
+a. The main objective is to model the relationship between weather and traffic accidents data at given time and location. The aim is to predict the number of car accidents based on past accident data and weather data. 
+
+b. Response variable is the count of traffic accidents,in this case it can be `TOTAL_ACCIDENT` variable. 
+
+c. Predictor variables are: Weather-related features, such as `PRCP`, `TMAX`, `TMIN`, `TAVG`; `date` feature.
+
+d. Yes, both the weather features and accident data are recorded systematically on a daily basis. The timely and routinely availability of these variables can help to make real-time or near real-time prediction that can be very useful. However, there will potentially be delay due to required processing and validation. 
+
+e. It can be said that the data in the future will have similar characteristics in a **short-term period**. However, there can be fluctuation in the patterns due to a lot of real-life factors, such as changing in environmental, political, or infrastructure conditions. Likewise, future weather patterns can be impacted by climate changes and other natural conditions variations. Therefore, it is crucial to closely monitor the performance of the model in the future.
+
+#### Q2.3: 
+
+- Generalized Linear Models (GLM) or potentially Generalized Additive Models (GAM) can be applied to generate the model because of their abilities to model relationships between our response and predictors features linearly.
+
+- AutoRegressive Integrated Moving Average (ARIMA) models or equivalent may also be considered. As our data sets are insisted of daily records, models that are suitable for time-series data can be applicable. This can help indicate trends, seasonality, and residuals overtime. 
+
+
+
+
+
+### Question 3:
+#### Q3.1:
+For this task, I will reuse the code from Assessment 2, where I chose 'Eastern Region' as selected region. 
+```{r}
+library(tidyverse)
+library(dbplyr)
+
+car_accidents_2a <- read.csv("car_accidents_victoria.csv", skip = 1, header = TRUE) # create a new data frame car_accidents_2a that skips the first row
+
+accident_data <- car_accidents_2a %>% dplyr::select(1:5) # select all the columns for desired Region 
+accident_data$DATE = as.Date(accident_data$DATE, format = "%d/%m/%Y") # format the DATE variable
+
+
+# adding TOTAL_ACCIDENT column
+accident_data <- accident_data%>%
+  group_by(DATE)%>%
+  mutate(TOTAL_ACCIDENT = sum(FATAL + SERIOUS + NOINJURY + OTHER))%>%
+  ungroup()
+
+head(accident_data)
+```
+
+#### Q3.2: Fit a linear model for Y using `date` as predictor variable:
+```{r}
+# convert DATE to a numeric value for linear modeling.
+accident_data$DATE_numeric <- as.numeric(accident_data$DATE)
+
+# fit the linear model 
+lm_model <- lm(TOTAL_ACCIDENT ~ DATE_numeric, data = accident_data)
+
+# summary statistics
+summary(lm_model)
+
+# fitted values and residuals
+accident_data$lm_fitted_values <- predict(lm_model, accident_data)
+accident_data$lm_residuals <- residuals(lm_model)
+
+
+# plotting original data and fitted values
+
+plot(accident_data$DATE, accident_data$TOTAL_ACCIDENT, xlab = "Date", ylab = "Total Accidents", pch = 16)
+lines(accident_data$DATE, accident_data$lm_fitted_values, col = "red", lwd = 2)
+
+# plotting residuals and fitted values
+plot(accident_data$lm_fitted_values,accident_data$lm_residuals)
+
+
+# plotting residuals over time
+plot(accident_data$DATE, accident_data$lm_residuals, xlab = "Date", ylab = "Residuals", pch = 16, col = "red")
+abline(h = 0, col = "blue", lwd = 2) # Horizontal line at 0 represent fitted values
+
+```
+From the result of fitting model, we can tell:
+
+- The model is statistically significant, since the p-value associated with the F-statistic is low at `6.378e-11`. This suggests there is a real relationship between the response and predictor values.
+
+- The R-squared value is very low at `0.02569`, indicating that the model does not explain much about the change in `TOTAL_ACCIDENTS`.
+
+From the residuals plots, we can tell that: 
+
+- There are some parallel lines were demonstrated in the plots, this shows that there might be a trend in between residuals points. This indicates that the residuals are not randomly scattered around the 0 value.
+
+Therefore, we can come to a conclusion that there might be some form of non-linearity in the relationship between the predictor and response variables that the model is not demonstrating. Linear model might not be the most appropriate. 
+
+#### Q3.3: Fitting a GAM model
+```{r}
+# Load the necessary library
+library(mgcv)
+
+# fit the GAM model
+gam_model <- gam(TOTAL_ACCIDENT ~ s(DATE_numeric), data = accident_data)
+
+# summary statistics
+summary(gam_model)
+
+# fitted values and residuals
+accident_data$gam_fitted_values <- fitted(gam_model)
+accident_data$gam_residuals <- residuals(gam_model)
+
+# plotting original data and fitted values
+
+plot(accident_data$DATE, accident_data$TOTAL_ACCIDENT, xlab = "Date", ylab = "Total Accidents", pch = 16)
+lines(accident_data$DATE, accident_data$gam_fitted_values, col = "green", lwd = 2)
+
+# plotting residuals and fitted values
+plot(accident_data$gam_fitted_values,accident_data$gam_residuals)
+
+# plotting residuals over time
+plot(accident_data$DATE, accident_data$gam_residuals, xlab = "Date", ylab = "Residuals", pch = 16, col = "red")
+abline(h = 0, col = "blue", lwd = 2) # Horizontal line at 0 represent fitted values
+
+```
+From the residuals plots, we can see that there are still some patterns in the residuals with GAM model. Even though the residual points appear to have less clear pattern than in the Linear model. This indicates that the model fit might still be insufficient.
+
+Additionally, looking at the response variable of TOTAL_ACCIDENT, we can see that there are only a few unique values, which mean there is a very small room between the values. This might be a factor that can eventually lead to the results of the plots of our models.
+
+
+#### Q3.4:
+To answer this question, I will group the dates in to weekdays, then proceed to add them into the models as a variable to allow the model to estimate the effect of each day.
+
+```{r}
+library(mgcv)
+
+# extract weekday from date
+accident_data$weekday <- wday(accident_data$DATE, label = TRUE)
+```
+For Linear model:
+```{r}
+# fitting linear model with 'weekday' as predictor variable
+
+lm_weekday_model <- lm(TOTAL_ACCIDENT ~ DATE_numeric + as.factor(weekday), data = accident_data)
+
+summary(lm_weekday_model)
+
+
+# plotting residuals and fitted values in linear model
+plot(fitted(lm_weekday_model), residuals(lm_weekday_model), pch = 16)
+abline(h = 0, col = "blue", lwd = 2)
+```
+As of GAM model:
+```{r}
+
+# fitting GAM model with 'weekday' as predictor variable
+
+gam_weekday_model <- gam(TOTAL_ACCIDENT ~ s(DATE_numeric) + as.factor(weekday), data = accident_data)
+
+summary(gam_weekday_model)
+# plotting residuals and fitted values in GAM model
+plot(fitted(gam_weekday_model), residuals(gam_weekday_model), pch = 16)
+abline(h = 0, col = "blue", lwd = 2)
+
+```
+
+#### Q3.5:
+```{r}
+# AIC for Linear Model
+aic_lm = AIC(lm_weekday_model)
+
+# AIC for GAM Model
+aic_gam = AIC(gam_weekday_model)
+
+# Print the AIC values
+print(paste("AIC for Linear Model: ", aic_lm))
+print(paste("AIC for GAM Model: ", aic_gam))
+```
+The AIC for GAM model is lower than it is with Linear model: 6190.941 to 6244.756. Therefore, the GAM model is considered to be the better model with better model fit and complexity. 
+
+```{r}
+summary(gam_weekday_model)
+```
+**GAM model report:**
+
+1. Model: 
+TOTAL_ACCIDENT∼s(DATE_numeric)+as.factor(weekday)
+
+2. Model summary:
+
+*Smooth term of `DATE_numeric`:*
+
+The smooth term of DATE_numeric is extremely significant with a p-value <2e-16.
+
+This indicates that the relationship between DATE_numeric and TOTAL_ACCIDENT is nonlinear and the smooth term effectively represents the underlying trend.
+
+*Weekday Factor:*
+
+The `as.factor(weekday).Q` is highly significant, with a p-value of <2e-16 
+
+This factor hints at the presence of a day-of-the-week effect, meaning the value of accident counts on specific days of the week is tend to be higher than others. 
+
+*Adjusted R-squared and Deviance Explained:*
+
+The adjusted R-squared is 0.107, and 11.5% of the deviance is explained by the model. This means that there is still considerable variation in TOTAL_ACCIDENT that is not described by the model.
+
+
+#### Q3.6:
+
+```{r}
+# plotting residuals and fitted values in linear model
+plot(fitted(gam_weekday_model), residuals(gam_weekday_model), pch = 16)
+abline(h = 0, col = "blue", lwd = 2)
+
+# histogram of residuals
+hist(resid(gam_weekday_model))
+```
+From the histogram, we can see that the residuals are fairly normally distributed. This indicates that the assumptions of the model are good. 
+
+From the plot, we can see that the patterns of residual points are distributed quite randomly around the 0 value, hardly can we see any correlation patterns among the residuals. 
+
+
+#### Q3.7:
+The day-of-the-week variable was created using `wday()` function. This variable is an ordered categorical datatype, with its levels representing different days of the week. When add this feature to the model, `as.factor(weekday)` was used to to convert the variable into an ordered factor. R will treat each unique value of this feature as a level of the factor.
+
+The datatype of the day-of-the-week variable does affect the model fit. It improves model fit because it enables the model to account for daily variations. Converting the variable into a factor can help capturing the inherent categorical nature of the variable, it can also allow more flexibility in the model, as each factor can have its own parameter estimate. All of this can help to avoid incorrect assumptions and demonstrations. 
+
+### Question 4:
+#### Q4.1:
+**Definition:**
+The EHF is a categorical variable that indicates the heatwave level of an event based on daily mean temperature (DMT) averaging across a three-day period (TDP). It measures the heat level of a TDP in conjunction with the annual temperature threshold in each location. If the DMT over a TDP is higher than the climatological 95th percentile for DMT (T95), then the whole period plus each individual day within it are categorised as being in a heatwave condition.
+
+**Purpose:**
+- Measuring Intensity: The EHF serves as a tool to gauge the intensity of heatwaves, allowing for a clear distinction between different heatwave events and facilitating a sensible analysis of strategies for resilience. 
+
+- Impact on Human Health: It is designed to reflect the intensity of heatwaves concerning human health outcomes, taking into account the accumulation of "excess heat" that persists overnight, affecting vulnerable individuals and systems. 
+
+- Climatological Context: The EHF is contextualized within a climatological framework to determine the severity of heatwaves and to standardize the climatological variation in the range of heatwave intensity across various regions. 
+
+- Forecasting and Monitoring: It serves as the foundation for a pilot heatwave forecasting service introduced in Australia in January 2014. This service provides vital information for communities to assess their vulnerability thresholds during periods of excessive heat and to forecast and issue warnings when severe or extreme heatwaves are on the horizon. 
+
+**Summary:**
+In summary, the EHF is a comprehensive and intricate metric meticulously designed to offer a thorough comprehension, measurement, and comparison of heatwave attributes, including intensity, frequency, distribution, and their repercussions, with a specific focus on human health outcomes and climatological disparities.
+
+To calculate the daily EHF values for `accident_data`, some steps will be processed: 
+
+- Calculate daily mean: We have already created `TAVG` from question 1, assuming this can be used as daily mean value. The temperature value is currently in unit of tenth of Celcius degree.
+
+- Calculate the 95th percentile threshold
+
+- Calculate \(EHI_{sig}\) and \(EHI_{accl}\)
+
+- Calculate EHF value for each day.
+
+```{r}
+library(dplyr)
+# Transform the unit of temperature 
+weather_data_wide <- weather_data_wide %>%
+  mutate(
+    TMAX = TMAX / 10,
+    TMIN = TMIN / 10,
+    TAVG = TAVG / 10
+  )
+```
+
+```{r}
+# calculating 95th percentile threshold
+T95 <- quantile(weather_data_wide$TAVG, 0.95, na.rm = TRUE)
+
+# creating new columns
+weather_data_wide$EHI_sig <- NA
+weather_data_wide$EHI_accl <- NA
+
+
+# calculating EHI_sig and EHI_accl
+n <- nrow(weather_data_wide)
+for (i in 31:(n - 2)) {
+  DMT_3_day <- mean(weather_data_wide$TAVG[i:(i+2)]) # 3-day average of TAVG 
+  DMT_30_day <- mean(weather_data_wide$TAVG[(i-30):(i-1)]) # 30-day average of TAVG 
+  
+  weather_data_wide$EHI_sig[i] <- DMT_3_day - T95
+  weather_data_wide$EHI_accl[i] <- DMT_3_day - DMT_30_day
+}
+
+# calculating EHF
+weather_data_wide$EHF <- with(weather_data_wide, EHI_sig * pmax(1, EHI_accl))
+
+# plotting EHF
+ggplot(weather_data_wide, aes(x = date, y = EHF)) +
+  geom_point() +
+  labs(title = "Daily EHF Values", x = "Date", y = "EHF Value") +
+  theme_minimal()
+```
+
+#### Q4.2:
+
+Firstly, I will reconcile the two data frames of `accident_data` and `weather_data_wide` by the date feature.
+
+```{r}
+completed_data <- merge(weather_data_wide, accident_data, 
+                       by.x = "date", by.y = "DATE", all = TRUE)
+head(completed_data)
+```
+
+Using EHF as an additional predictor in GAM model
+```{r}
+# fitting model
+combined_gam_model <- gam(TOTAL_ACCIDENT ~ s(DATE_numeric) + as.factor(weekday) + s(EHF), data = completed_data)
+summary(combined_gam_model)
+
+# AIC test
+aic_value <- AIC(combined_gam_model)
+print(paste("AIC of the Model: ", aic_value))
+
+# plotting model
+plot(fitted(combined_gam_model), resid(combined_gam_model), 
+     xlab = "Fitted Values", 
+     ylab = "Residuals")
+abline(h = 0, col = "red")
+```
+
+It can be seen from the plot that the residuals are being distributed more random around the 0 value and less likely to have a correlation pattern. This shows that the model is a better fitting model with EHF as an additional predictor.
+
+Regarding the AIC, we can also see that the AIC is significantly lower than the other models that we fitted before. Therefore, it can be said that with EHF, the model indicates a generally better fitting model.
+
+However, base on the result of fitting model, the EHF itself is not very statistically significant in predicting the number of road accidents, with:
+
+- Estimated degrees of freedom (edf): 6.088
+
+- F-statistic: 0.858
+
+- p-value: 0.605
+
+In conclusion, while adding EHF helps fitting a better fitting model, the feature itself does not significantly predict the number of road accidents in this specific case.
+
+#### Q4.3:
+1. 
+
+According to the results above, the EHF might not be very effective in predicting the road accident numbers in this specific case. 
+
+I will then proceed to use the extra weather feature of Precipitation: `PRCP` with the unit of 'tenth of mm'. This can be a very informative and effective feature in predicting traffic accidents, because:
+
+- Rainy weather can result in changes in traffic flow, when people leaving work earlier or later to avoid the rain.
+
+- Rain can lead to reduce in visibility of the drivers, making it a safety concern. 
+
+- Heavy rain eventually can lead to flooding, creating infrastructure problem.
+
+**Exploratory data analysis**
+```{r}
+# summarize the feature
+summary(completed_data$PRCP)
+
+# histogram of the feature
+hist(completed_data$PRCP, main="Histogram of PRCP", xlab="Precipitation", col="lightblue", border="black")
+
+# plot the feature
+plot(completed_data$PRCP, completed_data$TOTAL_ACCIDENT, main="Scatterplot of PRCP vs Total Accident", 
+     xlab="Precipitation", ylab="Total Accident", pch=19, col=rgb(0,0,0,0.5))
+
+```
+
+Use `PRCP` as an additional predictor
+
+```{r}
+# fitting model
+new_combined_gam_model <- gam(TOTAL_ACCIDENT ~ s(DATE_numeric) + as.factor(weekday) + s(EHF) +s(PRCP), data = completed_data)
+summary(new_combined_gam_model)
+
+# AIC test
+aic_value <- AIC(new_combined_gam_model)
+print(paste("AIC of the Model: ", aic_value))
+
+# plotting model
+plot(fitted(new_combined_gam_model), resid(new_combined_gam_model), 
+     xlab = "Fitted Values", 
+     ylab = "Residuals")
+abline(h = 0, col = "red")
+```
+
+After fitting the model and finding AIC, we can have a general view at how `PRCP` can contribute to the model.
+
+The AIC result is 5618.646 is the lowest AIC in all of the models that we have created earlier. This can be translated that with `PRCP`, the model tend to fit better.
+
+the p-value of `PRCP` is 0.184, which is significantly higher than as of `EHF`. This shows that the feature is more statistically significant than `EHF`.
+
+From the plot, we can also see that the distribution of residuals points is more random and less likely to have a correlation pattern.
+
+### Question 5:
+#### Q5.1:
+We used some historical data to fit regression models in this assignment quite effectively. However, there are some additional data that I believe can be compatible and can be used to improve the robustness and accuracy of the predicting model, such as:
+
+- Traffic volume: Traffic flow, Vehicle average speed,... can be very straight forward impacts on the number of traffic accidents in an area.
+
+- Driver Demographics data: Genders, Average age, Driving experience, Vehicle types and conditions,... This data can be crucial to predict the number of car accidents in a specific area.
+
+- Road characteristics: Road conditions, Road types, Intersection types,... can significantly impact the changes in number of traffic accidents of a specific area.
+
+- Economical data: Like fuel prices can also impact drivers behavior on the road.
+
+- Other weather data, like Wind speed, Fog, Snow, Humidity,..
+
+#### Q5.2:
+a. In statistical analysis, both objectives of *understanding a process* and *making prediction* are important and play crucial roles in this assignment. However, there are some reasons for us to choose one over another. Personally, I would pick *understanding a process* aspect of regression modeling in this assignment, given the fact that we have a diverse range of contributory factors to the response variable. Also, the main focus of this assignment is to improve the prediction for rescue services demand. This long-term goal needs a thorough understanding of the relationships between the variables in order to optimize the resources and delivery better decisions in preparing for better road safety.
+
+b. 
+Choosing to focus more on understanding the process may lead to a wider variety of factors to investigate potential relationships and interactions. More detailed exploratory data analysis might be required. The models may become more complicated and needed to be taken more carefully. 
+
+On the other hand, if making prediction is the main goal, more data processing and selection of the most relevant predictors might be put into work to ensure a more accurate prediction. More advanced modeling techniques might be required to enhance accuracy, even resulting in the model become harder to be interpreted.
+
+#### Q5.3: 
+During the process of data analysis in this assignment, some aspects of the objectives/ questions that set out to address have been answered. For instance, the insights between various factors like `EHF`, `PRCP`, `weekdays`, `date` have been provided throughout the process. The use of Linear and GAM models has allow the exploration of the effect of different predictors on the traffic accidents. 
+
+Nonetheless, there are still a lot of rooms for improvement for the analyses. The process can be extended further by incorporating additional features and the relationships between them. 
+
+In conclusion, key components in achieving meaningful and reliable analyses are to enhance regression models with more precise data from various data sources. Clearly identify the main end-goal of the task also plays a crucial parts in delivering trustworthy analyses, whether to focus on understanding the process or making predictions. The initial steps have provided meaningful insights, additional development of the models will be the key for a complete comprehension and as a result, precise forecasts. 
